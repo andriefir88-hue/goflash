@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Go Flash - MVP Enterprise</title>
+    
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0F4C81">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/61/61120.png">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css" />
+    <style>
+        /* Sembunyikan panel instruksi teks (Belok Kiri/Kanan) agar layar HP tidak penuh */
+        .leaflet-routing-container { display: none !important; }
+    </style>
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        body { font-family: 'Poppins', sans-serif; overscroll-behavior: none; }
+        #map { height: 100vh; width: 100vw; position: absolute; z-index: 0; }
+        
+        /* Modal & UI Layering */
+        .modal { display: none; position: fixed; inset: 0; z-index: 9999; background: rgba(15, 76, 129, 0.8); backdrop-filter: blur(4px); align-items: center; justify-content: center; }
+        .modal.active { display: flex; }
+        .tab-page { position: fixed; inset: 0; background: #F3F4F6; z-index: 50; transform: translateX(100%); transition: 0.3s; padding-bottom: 80px; overflow-y: auto; }
+        .tab-page.active { transform: translateX(0); }
+        
+        /* Bottom Sheet Order */
+        #driver-sheet, #panel-tracking-customer, #panel-trip-driver { 
+            position: fixed; left: 0; right: 0; bottom: -100%; 
+            background: white; z-index: 60; border-radius: 24px 24px 0 0; 
+            box-shadow: 0 -10px 40px rgba(0,0,0,0.2); transition: 0.4s cubic-bezier(0.33, 1, 0.68, 1); 
+            padding: 24px; padding-bottom: 100px;
+        }
+        
+        /* Utility */
+        .btn-gold { background: linear-gradient(135deg, #FFD700, #D4AF37); color: #0F4C81; font-weight: bold; }
+        .btn-royal { background: #0F4C81; color: white; font-weight: bold; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body class="bg-gray-100">
+
+    <div id="map"></div>
+    <audio id="notif-sound" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
+
+    <div class="fixed top-4 left-4 z-[45] flex items-center gap-3">
+        <div class="bg-white p-1 rounded-full shadow-lg border-2 border-white">
+            <img src="logo.jpg" class="w-10 h-10 rounded-full object-cover" alt="L">
+        </div>
+        <div class="flex flex-col">
+            <h1 class="text-lg font-bold text-[#0F4C81] leading-none drop-shadow-sm">Go Flash</h1>
+            <span class="text-[8px] font-bold text-white bg-[#D4AF37] px-1.5 py-0.5 rounded-sm mt-0.5">EXECUTIVE</span>
+        </div>
+    </div>
+
+    <div id="auth-buttons" class="fixed top-4 right-4 z-[50]">
+        <button onclick="openModal('modal-menu')" class="bg-white/90 backdrop-blur px-4 py-2 rounded-full shadow-xl flex items-center gap-2 border border-blue-50">
+            <span class="text-xs font-bold text-royal">MASUK / DAFTAR</span>
+            <i class="fas fa-user-circle text-royal text-lg"></i>
+        </button>
+    </div>
+
+    <div id="driver-sheet">
+        <div class="w-12 h-1.5 bg-gray-200 rounded-full mx-auto mb-6"></div>
+        <div class="flex items-center gap-4 mb-6">
+            <div class="relative">
+                <img id="sheet-drv-img" class="w-16 h-16 rounded-full border-2 border-royal bg-gray-100 object-cover">
+                <div id="sheet-drv-status-dot" class="absolute bottom-0 right-0 w-4 h-4 rounded-full border-2 border-white bg-green-500"></div>
+            </div>
+            <div class="flex-1">
+                <h3 id="sheet-drv-name" class="font-bold text-royal text-lg leading-none">Memuat...</h3>
+                <p id="sheet-drv-vehicle" class="text-xs text-gray-500 mt-1"><span id="sheet-drv-model">Motor</span> • <span id="sheet-drv-plate" class="font-bold">L 0000 XX</span></p>
+                <p id="sheet-busy-msg" class="hidden text-[10px] font-bold text-red-500 uppercase mt-1">Sedang Melayani Customer</p>
+            </div>
+            <button onclick="closeDriverSheet()" class="text-gray-300 hover:text-red-500 transition"><i class="fas fa-times-circle text-2xl"></i></button>
+        </div>
+
+        <div id="sheet-main-actions" class="grid grid-cols-3 gap-3">
+            <button onclick="startChatFromSheet()" class="flex flex-col items-center p-3 bg-blue-50 rounded-2xl border border-blue-100">
+                <i class="fas fa-comment-dots text-royal text-xl mb-1"></i>
+                <span class="text-[10px] font-bold text-royal">CHAT</span>
+            </button>
+            <button onclick="showOrderForm('ride')" class="flex flex-col items-center p-3 bg-green-50 rounded-2xl border border-green-100">
+                <i class="fas fa-motorcycle text-green-600 text-xl mb-1"></i>
+                <span class="text-[10px] font-bold text-green-600">RIDE</span>
+            </button>
+            <button onclick="showOrderForm('delivery')" class="flex flex-col items-center p-3 bg-orange-50 rounded-2xl border border-orange-100">
+                <i class="fas fa-box text-orange-500 text-xl mb-1"></i>
+                <span class="text-[10px] font-bold text-orange-500">DELIVERY</span>
+            </button>
+        </div>
+
+        <div id="sheet-order-form" class="hidden">
+            <div class="flex items-center gap-2 mb-4 cursor-pointer text-gray-400" onclick="hideOrderForm()">
+                <i class="fas fa-arrow-left text-xs"></i> <span class="text-xs font-bold">Kembali</span>
+            </div>
+            <div class="bg-gray-50 p-4 rounded-2xl mb-4 border border-gray-100">
+                <div class="flex items-center gap-3 mb-3">
+                    <div id="order-icon-container" class="w-10 h-10 rounded-full flex items-center justify-center text-white">
+                        <i id="order-type-icon" class="fas fa-motorcycle"></i>
+                    </div>
+                    <div class="flex-1">
+                        <p id="order-type-label" class="text-[10px] font-bold text-gray-400 uppercase">Layanan</p>
+                        <select id="dest-select" onchange="calculatePrice()" class="w-full bg-transparent font-bold text-royal outline-none">
+                            </select>
+                    </div>
+                </div>
+                <div class="flex justify-between items-center pt-3 border-t border-gray-200">
+                    <span class="text-xs text-gray-400 font-bold">Estimasi Biaya</span>
+                    <span id="price-display" class="text-xl font-bold text-royal">Rp 0</span>
+                </div>
+            </div>
+            <button id="btn-submit-order" onclick="submitOrder()" class="w-full py-4 bg-gold text-white font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 transition active:scale-95">
+               <span>KONFIRMASI PESANAN</span> <i class="fas fa-paper-plane"></i>
+            </button>
+        </div>
+    </div>
+
+<div id="panel-tracking-customer">
+        <div class="w-12 h-1 bg-gray-100 mx-auto mb-4"></div>
+        
+        <div class="flex items-center justify-between mb-4">
+            <button onclick="document.getElementById('panel-tracking-customer').style.bottom = '-100%'" class="text-gray-400 hover:text-royal transition w-8 h-8 flex items-center justify-center">
+                <i class="fas fa-arrow-left text-xl"></i>
+            </button>
+            
+            <h2 id="track-status-text" class="font-bold text-royal text-lg flex-1 text-center mr-8">Driver Menuju Lokasi</h2>
+        </div>
+
+        <div class="bg-gray-50 p-4 rounded-2xl flex items-center gap-4">
+            <img id="track-drv-img" class="w-12 h-12 rounded-full bg-gray-200 object-cover">
+            <div class="flex-1">
+                <h4 id="track-drv-name" class="font-bold text-royal leading-none">Nama Driver</h4>
+                <p class="text-[10px] text-gray-500 mt-1">Mitra Go Flash</p>
+            </div>
+            <button onclick="openChatRoom()" class="w-10 h-10 bg-white shadow-sm rounded-full flex items-center justify-center text-royal"><i class="fas fa-comment"></i></button>
+        </div>
+    </div>
+
+    <div id="panel-trip-driver">
+        <div class="w-12 h-1 bg-gray-100 mx-auto mb-4"></div>
+        <div class="flex justify-between mb-2">
+            <div><p class="text-[10px] font-bold text-gray-400 uppercase">Pelanggan</p><h3 id="trip-cust-name" class="font-bold text-royal text-lg">Nama...</h3></div>
+            <div class="text-right"><p class="text-[10px] font-bold text-gray-400 uppercase">Biaya</p><h3 id="trip-price" class="font-bold text-green-600 text-lg">Rp 0</h3></div>
+        </div>
+        <div class="bg-blue-50 p-3 rounded-xl text-xs text-royal font-bold flex gap-2 mb-4">
+            <i class="fas fa-map-marker-alt text-red-500"></i> <span id="trip-dest">Tujuan...</span>
+        </div>
+        <div class="grid grid-cols-4 gap-2">
+            <button onclick="openChatRoom()" class="col-span-1 bg-gray-100 py-4 rounded-xl text-gray-500"><i class="fas fa-comment-alt"></i></button>
+            <button onclick="updateTripStatus()" class="col-span-3 btn-royal py-4 rounded-xl">SELESAIKAN PERJALANAN</button>
+        </div>
+    </div>
+
+    <div id="modal-menu" class="modal">
+        <div class="bg-white w-[90%] max-w-sm rounded-[32px] p-6 text-center animate-slide-up">
+            <h2 class="text-xl font-bold text-royal mb-6">Pilih Akun</h2>
+            <div class="space-y-4">
+                <div class="bg-gray-50 p-4 rounded-2xl">
+                    <p class="text-[10px] font-bold text-gray-400 uppercase mb-3">Penumpang</p>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button onclick="switchModal('modal-cust-register')" class="btn-gold py-2 rounded-lg text-xs">DAFTAR</button>
+                        <button onclick="switchModal('modal-cust-login')" class="btn-royal py-2 rounded-lg text-xs">MASUK</button>
+                    </div>
+                </div>
+                <div class="bg-gray-50 p-4 rounded-2xl border-2 border-royal/10">
+                    <p class="text-[10px] font-bold text-gray-400 uppercase mb-3">Mitra Driver</p>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button onclick="switchModal('modal-drv-register')" class="btn-gold py-2 rounded-lg text-xs">DAFTAR</button>
+                        <button onclick="switchModal('modal-drv-login')" class="btn-royal py-2 rounded-lg text-xs">MASUK</button>
+                    </div>
+                </div>
+            </div>
+            <button onclick="closeModal('modal-menu')" class="mt-6 text-gray-400 text-xs font-bold">TUTUP</button>
+        </div>
+    </div>
+
+    <div id="modal-otp" class="modal">
+        <div class="bg-white w-[85%] max-w-xs rounded-[32px] p-8 text-center">
+            <div class="w-16 h-16 bg-blue-50 text-royal rounded-full flex items-center justify-center mx-auto mb-4 text-2xl"><i class="fas fa-shield-alt"></i></div>
+            <h2 class="text-lg font-bold text-royal mb-2">Verifikasi OTP</h2>
+            <p class="text-[10px] text-gray-400 mb-6">Kode dikirim melalui Server Console</p>
+            <input type="tel" id="otp-input" class="w-full text-center text-3xl font-bold text-royal border-b-4 border-royal/20 focus:border-royal outline-none pb-2 mb-8 tracking-[0.5em]" maxlength="4" placeholder="0000">
+            <button onclick="verifyOTP()" class="btn-gold w-full py-4 rounded-2xl shadow-md">VERIFIKASI</button>
+        </div>
+    </div>
+
+<div id="view-profile" class="tab-page">
+        <div class="p-6">
+            <div class="flex items-center gap-4 mb-8">
+                <button onclick="switchTab('home')" class="text-gray-400 hover:text-royal transition"><i class="fas fa-arrow-left text-xl"></i></button>
+                <h2 class="text-2xl font-bold text-royal flex-1">Profil Saya</h2>
+                <button onclick="logout()" class="text-red-500 font-bold text-xs">KELUAR</button>
+            </div>
+
+            <div class="bg-white p-6 rounded-[32px] shadow-sm text-center mb-6">
+                <div class="relative inline-block mb-4">
+                    <img id="page-profile-img" class="w-24 h-24 rounded-full border-4 border-white shadow-lg object-cover bg-gray-50">
+                    <label for="profile-upload" class="absolute bottom-0 right-0 bg-gold w-8 h-8 rounded-full flex items-center justify-center border-2 border-white cursor-pointer"><i class="fas fa-camera text-royal text-xs"></i></label>
+                    <input type="file" id="profile-upload" class="hidden" accept="image/*" onchange="previewProfileImage(this)">
+                </div>
+                <h3 id="page-profile-name" class="font-bold text-royal text-xl">User</h3>
+                <p id="page-profile-phone" class="text-xs text-gray-400 font-bold">08...</p>
+            </div>
+            
+            <div id="driver-toggle-container" class="hidden bg-white p-5 rounded-2xl flex justify-between items-center mb-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-green-50 text-green-600 rounded-full flex items-center justify-center"><i class="fas fa-id-badge text-xl"></i></div>
+                    <span class="font-bold text-royal">Mode Driver</span>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="driver-status-toggle" class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-green-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                </label>
+            </div>
+            
+            <button onclick="openEditProfile()" class="w-full bg-white text-royal font-bold py-4 rounded-2xl border border-gray-100">EDIT PROFIL</button>
+        </div>
+    </div>
+            
+            <div id="driver-toggle-container" class="hidden bg-white p-5 rounded-2xl flex justify-between items-center mb-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-green-50 text-green-600 rounded-full flex items-center justify-center"><i class="fas fa-id-badge text-xl"></i></div>
+                    <span class="font-bold text-royal">Mode Driver</span>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="driver-status-toggle" class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-green-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                </label>
+            </div>
+            
+            <button onclick="openEditProfile()" class="w-full bg-white text-royal font-bold py-4 rounded-2xl border border-gray-100">EDIT PROFIL</button>
+        </div>
+    </div>
+
+<div class="fixed bottom-0 left-0 right-0 h-20 bg-white border-t border-gray-100 z-[70] flex justify-around items-center px-4 rounded-t-[32px] shadow-2xl">
+        <button onclick="switchTab('home')" class="nav-item text-royal flex flex-col items-center"><i class="fas fa-map-marked-alt text-xl"></i><span class="text-[9px] font-bold mt-1">Peta</span></button>
+        <button onclick="switchTab('chat')" class="nav-item text-gray-400 flex flex-col items-center"><i class="fas fa-comments text-xl"></i><span class="text-[9px] font-bold mt-1">Chat</span></button>
+        
+        <button onclick="switchTab('history')" class="nav-item text-gray-400 flex flex-col items-center"><i class="fas fa-history text-xl"></i><span class="text-[9px] font-bold mt-1">Riwayat</span></button>
+        
+        <div id="nav-driver-orders" class="hidden nav-item text-gray-400 flex flex-col items-center cursor-pointer" onclick="switchTab('orders')"><i class="fas fa-bell text-xl"></i><span class="text-[9px] font-bold mt-1">Order</span></div>
+        <button onclick="switchTab('profile')" class="nav-item text-gray-400 flex flex-col items-center">
+            <img id="nav-profile-img" class="w-6 h-6 rounded-full border border-gray-200">
+            <span class="text-[9px] font-bold mt-1">Profil</span>
+        </button>
+    </div>
+
+<div id="modal-cust-register" class="modal">
+        <div class="bg-white w-[90%] rounded-3xl p-6 relative pt-12">
+            <button onclick="closeModal('modal-cust-register'); openModal('modal-menu');" class="absolute top-4 left-4 text-gray-400 w-8 h-8 flex items-center justify-center"><i class="fas fa-arrow-left"></i></button>
+            
+            <h3 class="font-bold text-royal mb-4 text-center">Daftar Penumpang</h3>
+            <input type="text" id="reg-cust-name" class="w-full bg-gray-50 p-3 rounded-xl mb-3 text-sm" placeholder="Nama Lengkap">
+            <input type="tel" id="reg-cust-phone" class="w-full bg-gray-50 p-3 rounded-xl mb-4 text-sm" placeholder="Nomor WhatsApp">
+            <button onclick="processAuth('register', 'customer')" class="btn-gold w-full py-3 rounded-xl text-sm">DAFTAR SEKARANG</button>
+        </div>
+    </div>
+    
+    <div id="modal-drv-register" class="modal">
+        <div class="bg-white w-[90%] rounded-3xl p-6 relative pt-12 overflow-y-auto max-h-[80vh]">
+            <button onclick="closeModal('modal-drv-register'); openModal('modal-menu');" class="absolute top-4 left-4 text-gray-400 w-8 h-8 flex items-center justify-center"><i class="fas fa-arrow-left"></i></button>
+            
+            <h3 class="font-bold text-royal mb-4 text-center">Daftar Mitra Driver</h3>
+            <div class="space-y-3">
+                <input type="text" id="reg-drv-name" class="w-full bg-gray-50 p-3 rounded-xl text-sm" placeholder="Nama Lengkap">
+                <input type="tel" id="reg-drv-phone" class="w-full bg-gray-50 p-3 rounded-xl text-sm" placeholder="Nomor WhatsApp">
+                <div class="grid grid-cols-2 gap-2">
+                    <input type="text" id="reg-drv-model" class="w-full bg-gray-50 p-3 rounded-xl text-sm" placeholder="Merk Motor">
+                    <input type="text" id="reg-drv-plate" class="w-full bg-gray-50 p-3 rounded-xl text-sm" placeholder="Plat Nomor">
+                </div>
+            </div>
+            <button onclick="processAuth('register', 'driver')" class="btn-gold w-full py-3 rounded-xl text-sm mt-4">DAFTAR MITRA</button>
+        </div>
+    </div>
+    
+    <div id="modal-drv-register" class="modal">
+        <div class="bg-white w-[90%] rounded-3xl p-6 overflow-y-auto max-h-[80vh]">
+            <h3 class="font-bold text-royal mb-4 text-center">Daftar Mitra Driver</h3>
+            <div class="space-y-3">
+                <input type="text" id="reg-drv-name" class="w-full bg-gray-50 p-3 rounded-xl text-sm" placeholder="Nama Lengkap">
+                <input type="tel" id="reg-drv-phone" class="w-full bg-gray-50 p-3 rounded-xl text-sm" placeholder="Nomor WhatsApp">
+                <div class="grid grid-cols-2 gap-2">
+                    <input type="text" id="reg-drv-model" class="w-full bg-gray-50 p-3 rounded-xl text-sm" placeholder="Merk Motor">
+                    <input type="text" id="reg-drv-plate" class="w-full bg-gray-50 p-3 rounded-xl text-sm" placeholder="Plat Nomor">
+                </div>
+            </div>
+            <button onclick="processAuth('register', 'driver')" class="btn-gold w-full py-3 rounded-xl text-sm mt-4">DAFTAR MITRA</button>
+            <button onclick="closeModal('modal-drv-register')" class="w-full mt-3 text-gray-400 text-xs font-bold">BATAL</button>
+        </div>
+    </div>
+
+<div id="modal-cust-login" class="modal">
+        <div class="bg-white w-[90%] rounded-3xl p-6 text-center relative pt-12">
+            <button onclick="closeModal('modal-cust-login'); openModal('modal-menu');" class="absolute top-4 left-4 text-gray-400 w-8 h-8 flex items-center justify-center"><i class="fas fa-arrow-left"></i></button>
+            <h3 class="font-bold text-royal mb-4">Masuk Penumpang</h3>
+            <input type="tel" id="login-cust-phone" class="w-full bg-gray-50 p-3 rounded-xl mb-4 text-sm" placeholder="Nomor WhatsApp">
+            <button onclick="processAuth('login', 'customer')" class="btn-royal w-full py-3 rounded-xl">MASUK</button>
+        </div>
+    </div>
+
+    <div id="modal-drv-login" class="modal">
+        <div class="bg-white w-[90%] rounded-3xl p-6 text-center relative pt-12">
+            <button onclick="closeModal('modal-drv-login'); openModal('modal-menu');" class="absolute top-4 left-4 text-gray-400 w-8 h-8 flex items-center justify-center"><i class="fas fa-arrow-left"></i></button>
+            <h3 class="font-bold text-royal mb-4">Masuk Driver</h3>
+            <input type="tel" id="login-drv-phone" class="w-full bg-gray-50 p-3 rounded-xl mb-4 text-sm" placeholder="Nomor WhatsApp">
+            <button onclick="processAuth('login', 'driver')" class="btn-royal w-full py-3 rounded-xl">MASUK</button>
+        </div>
+    </div>
+
+    <div id="modal-chat-room" class="modal bg-white">
+        <div class="w-full h-full flex flex-col">
+            <div class="p-4 flex items-center gap-3 border-b">
+                <button onclick="closeModal('modal-chat-room')" class="text-gray-400"><i class="fas fa-arrow-left"></i></button>
+                <h3 id="chat-room-name" class="font-bold text-royal flex-1">Chat</h3>
+            </div>
+            <div id="chat-messages" class="flex-1 p-4 overflow-y-auto space-y-3 bg-gray-50"></div>
+            <div class="p-3 border-t flex gap-2">
+                <input type="text" id="chat-input" class="flex-1 bg-gray-100 px-4 py-2 rounded-full outline-none text-sm" placeholder="Ketik pesan...">
+                <button onclick="sendChat()" class="bg-royal text-gold w-10 h-10 rounded-full flex items-center justify-center"><i class="fas fa-paper-plane"></i></button>
+            </div>
+        </div>
+    </div>
+<div id="modal-payment" class="modal">
+        <div class="bg-white w-[85%] rounded-[32px] p-8 text-center shadow-2xl">
+            <h3 class="font-bold text-royal text-lg mb-2">Pembayaran QRIS</h3>
+            <p class="text-xs text-gray-400 mb-4">Scan QR di bawah ini</p>
+            
+            <div class="bg-white p-2 border border-gray-200 inline-block mb-4 rounded-xl shadow-sm">
+                <img src="qris.jpg" onerror="this.src='https://via.placeholder.com/200x200?text=QRIS'" class="w-48 h-48 object-cover rounded-lg">
+            </div>
+            
+            <div class="mb-6">
+                <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Total Tagihan</p>
+                <p id="payment-amount" class="text-3xl font-bold text-royal">Rp 0</p>
+            </div>
+            
+            <button onclick="confirmPayment()" class="btn-gold w-full py-4 rounded-2xl shadow-lg active:scale-95 transition">SAYA SUDAH BAYAR</button>
+            <button onclick="closeModal('modal-payment')" class="mt-4 text-xs font-bold text-gray-400">Tutup</button>
+        </div>
+    </div>
+
+   <div id="modal-waiting" class="modal">
+        <div class="bg-white w-[85%] rounded-[40px] p-8 text-center shadow-2xl transition-all duration-300">
+            <div class="relative w-24 h-24 mx-auto mb-6 flex items-center justify-center">
+                <div class="absolute inset-0 bg-blue-100 rounded-full radar-ping"></div>
+                <div class="absolute inset-0 bg-blue-50 rounded-full radar-ping" style="animation-delay: 0.5s"></div>
+                <div class="relative z-10 w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-lg border border-blue-100 transition-colors duration-300" id="waiting-icon-box">
+                    <i id="waiting-icon" class="fas fa-search-location text-2xl text-royal transition-all duration-300"></i>
+                </div>
+            </div>
+            <h3 id="waiting-title" class="text-lg font-bold text-royal mb-2">Menunggu konfirmasi Driver...</h3>
+            <p id="waiting-desc" class="text-xs text-gray-400 mb-6 px-4">Permintaan Anda sedang disiarkan ke driver.</p>
+            <button id="waiting-btn" onclick="closeModal('modal-waiting')" class="text-red-500 font-bold text-xs bg-red-50 px-8 py-3 rounded-full hover:bg-red-100 transition shadow-sm">BATALKAN PESANAN</button>
+        </div>
+    </div>
+
+    <div id="modal-incoming-order" class="modal">
+        <div class="bg-white w-[90%] rounded-[32px] p-6 text-center border-t-8 border-royal shadow-2xl relative">
+            <div class="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center text-3xl mx-auto mb-4 animate-bounce border-4 border-white shadow-md">
+                <i class="fas fa-bell"></i>
+            </div>
+            <h3 class="text-xl font-bold text-royal mb-1">Order Masuk!</h3>
+            <p class="text-xs text-gray-400 mb-4">Segera konfirmasi pesanan ini</p>
+            
+            <div class="bg-gray-50 p-4 rounded-2xl mb-6 text-left border border-gray-100">
+                <div class="mb-3">
+                    <p class="text-[9px] font-bold text-gray-400 uppercase">Lokasi Jemput</p>
+                    <p id="incoming-pickup" class="text-sm font-bold text-royal leading-tight">...</p>
+                </div>
+                <div class="mb-3">
+                    <p class="text-[9px] font-bold text-gray-400 uppercase">Tujuan Antar</p>
+                    <p id="incoming-dest" class="text-sm font-bold text-royal leading-tight">...</p>
+                </div>
+                <div class="flex justify-between items-center pt-3 border-t border-dashed border-gray-200 mt-2">
+                    <span class="text-xs font-bold text-gray-500">Pendapatan</span>
+                    <span id="incoming-price" class="text-lg font-bold text-green-600">Rp 0</span>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-3">
+                <button onclick="closeModal('modal-incoming-order')" class="bg-gray-100 text-gray-500 py-3 rounded-xl font-bold text-sm">TOLAK</button>
+                <button onclick="acceptOrder()" class="btn-royal py-3 rounded-xl shadow-lg active:scale-95 transition text-sm">TERIMA</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-edit-profile" class="modal">
+        <div class="bg-white w-[90%] rounded-[32px] p-6 relative">
+            <h3 class="font-bold text-royal text-lg mb-6 text-center">Edit Profil</h3>
+            
+            <div class="flex justify-center mb-6">
+                <div class="relative">
+                    <img id="edit-profile-preview" src="" class="w-24 h-24 rounded-full border-4 border-gray-100 object-cover bg-gray-50">
+                    <label for="edit-photo-input" class="absolute bottom-0 right-0 bg-gold w-8 h-8 rounded-full flex items-center justify-center cursor-pointer shadow border-2 border-white">
+                        <i class="fas fa-camera text-white text-xs"></i>
+                    </label>
+                    <input type="file" id="edit-photo-input" class="hidden" accept="image/*" onchange="previewProfileImage(this)">
+                </div>
+            </div>
+            
+            <div class="space-y-3 mb-6">
+                <input id="edit-name" class="w-full bg-gray-50 p-4 rounded-xl text-sm font-bold text-royal outline-none border border-transparent focus:border-royal transition" placeholder="Nama Lengkap">
+                <input id="edit-plate" class="w-full bg-gray-50 p-4 rounded-xl text-sm font-bold text-royal outline-none border border-transparent focus:border-royal transition hidden" placeholder="Plat Nomor (Driver)">
+            </div>
+            
+            <button onclick="saveProfile()" class="btn-royal w-full py-4 rounded-2xl shadow-lg active:scale-95 transition">SIMPAN PERUBAHAN</button>
+            <button onclick="closeModal('modal-edit-profile')" class="w-full mt-4 text-xs font-bold text-gray-400">BATAL</button>
+        </div>
+    </div>
+
+<div id="view-chat-list" class="tab-page pt-24 px-5">
+        <div class="flex items-center gap-3 mb-2">
+            <button onclick="switchTab('home')" class="text-gray-400 text-xl"><i class="fas fa-arrow-left"></i></button>
+            <h2 class="text-2xl font-bold text-royal">Pesan</h2>
+        </div>
+        <p class="text-xs text-gray-400 mb-6 pl-8">Percakapan aktif</p>
+        <div id="chat-list-container" class="space-y-3 pb-24"></div>
+    </div>
+
+    <div id="view-orders" class="tab-page pt-24 px-5">
+        <div class="flex items-center gap-3 mb-2">
+            <button onclick="switchTab('home')" class="text-gray-400 text-xl"><i class="fas fa-arrow-left"></i></button>
+            <h2 class="text-2xl font-bold text-royal">Order Masuk</h2>
+        </div>
+        <p class="text-xs text-gray-400 mb-6 pl-8">Khusus Driver</p>
+        <div id="driver-orders-list" class="space-y-3 pb-24"></div>
+    </div>
+
+<div id="view-history" class="tab-page pt-24 px-5">
+        <div class="flex items-center gap-3 mb-2">
+            <button onclick="switchTab('home')" class="text-gray-400 text-xl"><i class="fas fa-arrow-left"></i></button>
+            <h2 class="text-2xl font-bold text-royal">Riwayat</h2>
+        </div>
+        <p class="text-xs text-gray-400 mb-6 pl-8">Perjalanan sebelumnya</p>
+        <div id="history-list" class="space-y-3 pb-24"></div>
+    </div>
+
+    <div id="modal-payment-method" class="modal">
+        <div class="bg-white w-[90%] rounded-[32px] p-6 text-center animate-slide-up">
+            <h3 class="font-bold text-royal text-lg mb-2">Pilih Pembayaran</h3>
+            <p class="text-xs text-gray-400 mb-6">Total Tagihan: <span id="pay-method-amount" class="text-royal font-bold">Rp 0</span></p>
+            
+            <div class="grid grid-cols-2 gap-4">
+                <button onclick="selectPaymentMethod('cash')" class="bg-green-50 p-4 rounded-2xl border border-green-100 flex flex-col items-center gap-2 hover:bg-green-100 transition">
+                    <div class="w-12 h-12 bg-green-500 rounded-full flex items-center justify-center text-white text-xl shadow-lg">
+                        <i class="fas fa-money-bill-wave"></i>
+                    </div>
+                    <span class="text-xs font-bold text-green-700">TUNAI (CASH)</span>
+                </button>
+                
+                <button onclick="selectPaymentMethod('qris')" class="bg-blue-50 p-4 rounded-2xl border border-blue-100 flex flex-col items-center gap-2 hover:bg-blue-100 transition">
+                    <div class="w-12 h-12 bg-royal rounded-full flex items-center justify-center text-white text-xl shadow-lg">
+                        <i class="fas fa-qrcode"></i>
+                    </div>
+                    <span class="text-xs font-bold text-royal">QRIS</span>
+                </button>
+            </div>
+            
+            <div id="payment-evidence-area" class="hidden mt-6 pt-4 border-t border-gray-100">
+                <p id="evidence-title" class="text-xs font-bold text-gray-500 mb-3">Foto Uang Tunai</p>
+                
+                <div class="relative w-full h-48 bg-gray-100 rounded-xl overflow-hidden mb-4 border-2 border-dashed border-gray-300 flex items-center justify-center">
+                    <img id="evidence-preview" class="hidden w-full h-full object-cover">
+                    <div id="evidence-placeholder" class="text-gray-400 flex flex-col items-center">
+                        <i class="fas fa-camera text-2xl mb-2"></i>
+                        <span class="text-[10px]">Belum ada foto</span>
+                    </div>
+                </div>
+
+                <div class="flex gap-2 mb-4">
+                    <label for="camera-input" class="flex-1 bg-royal text-white py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow-lg active:scale-95">
+                        <i class="fas fa-camera"></i> KAMERA
+                    </label>
+                    <input type="file" id="camera-input" accept="image/*" capture="environment" class="hidden" onchange="handleEvidence(this)">
+                    
+                    <label for="file-input" class="flex-1 bg-gray-200 text-gray-600 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer active:scale-95">
+                        <i class="fas fa-folder-open"></i> GALERI
+                    </label>
+                    <input type="file" id="file-input" accept="image/*" class="hidden" onchange="handleEvidence(this)">
+                </div>
+
+                <button onclick="submitPaymentProof()" id="btn-send-proof" class="w-full bg-gray-300 text-white font-bold py-3 rounded-xl cursor-not-allowed transition" disabled>
+                    KIRIM BUKTI BAYAR <i class="fas fa-paper-plane ml-1"></i>
+                </button>
+            </div>
+            
+            <button onclick="closeModal('modal-payment-method')" class="mt-4 text-xs font-bold text-gray-400">Tutup</button>
+        </div>
+    </div>
+
+    <div id="modal-driver-action" class="modal">
+        <div class="bg-white w-[90%] rounded-[32px] p-6 shadow-2xl relative">
+            <button onclick="closeModal('modal-driver-action')" class="absolute top-4 right-4 text-gray-300"><i class="fas fa-times"></i></button>
+            
+            <div class="text-center mb-6">
+                <h3 class="font-bold text-royal text-lg">Kontrol Misi</h3>
+                <p class="text-[10px] text-gray-400">Order ID: <span id="ctrl-order-id">...</span></p>
+            </div>
+
+            <div class="space-y-4">
+                <div class="flex items-center gap-3 p-3 bg-green-50 rounded-xl border border-green-100">
+                    <div class="w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center text-xs"><i class="fas fa-check"></i></div>
+                    <div class="flex-1">
+                        <p class="text-xs font-bold text-green-700">1. Pesanan Diterima</p>
+                        <p class="text-[10px] text-green-600">Anda sedang bertugas.</p>
+                    </div>
+                </div>
+
+                <div id="step-2-container" class="opacity-50 pointer-events-none transition-all duration-300">
+                    <div class="flex items-center gap-3 p-3 bg-white rounded-xl border border-gray-200 shadow-sm">
+                        <div class="w-8 h-8 rounded-full bg-gray-300 text-white flex items-center justify-center text-xs" id="step-2-icon"><i class="fas fa-lock"></i></div>
+                        <div class="flex-1">
+                            <p class="text-xs font-bold text-gray-500" id="step-2-title">2. Menunggu Pembayaran</p>
+                            <p class="text-[10px] text-gray-400" id="step-2-desc">Customer belum kirim bukti.</p>
+                        </div>
+                        <button onclick="verifyPaymentAction()" id="btn-verify-pay" class="px-4 py-2 bg-royal text-white text-[10px] font-bold rounded-lg hidden">VERIFIKASI</button>
+                    </div>
+                    <div id="proof-display-area" class="hidden mt-2 p-2 bg-gray-100 rounded-lg text-center">
+                        <p class="text-[10px] font-bold text-gray-500 mb-2">Bukti Masuk:</p>
+                        <img id="driver-proof-img" class="h-32 mx-auto rounded-lg border border-gray-300 object-cover" onclick="window.open(this.src)">
+                    </div>
+                </div>
+
+<div id="step-3-container" class="opacity-50 pointer-events-none transition-all duration-300 border-t border-gray-100 pt-4 mt-2">
+                    <p class="text-xs font-bold text-gray-500 mb-3">3. Bukti Serah Terima (Wajib)</p>
+                    
+                    <div id="handover-preview-container" class="hidden mb-3">
+                        <img id="handover-preview-img" class="w-full h-32 object-cover rounded-lg border border-gray-300" onclick="window.open(this.src)">
+                    </div>
+
+                    <label id="btn-take-handover" for="handover-cam-input" class="w-full bg-blue-50 text-blue-600 border border-blue-200 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer mb-3 active:scale-95 transition">
+                        <i class="fas fa-camera"></i> AMBIL FOTO SERAH TERIMA
+                    </label>
+                    <input type="file" id="handover-cam-input" accept="image/*" capture="environment" class="hidden" onchange="handleHandoverPhoto(this)">
+
+                    <button id="btn-finish-mission" onclick="finishMissionAction()" disabled class="w-full py-4 bg-gray-300 text-white font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 cursor-not-allowed transition">
+                        <i class="fas fa-flag-checkered"></i> MISI SELESAI
+                    </button>
+                    <p id="finish-mission-hint" class="text-[10px] text-center text-gray-400 mt-2">Ambil foto terlebih dahulu untuk menyelesaikan misi.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<div id="modal-order-type" class="fixed inset-0 z-[99] hidden flex items-center justify-center bg-black/60 backdrop-blur-sm transition-opacity opacity-0">
+        <div class="bg-white w-11/12 max-w-sm rounded-3xl overflow-hidden shadow-2xl transform scale-95 transition-transform duration-300">
+            
+            <div class="bg-royal p-4 flex items-center justify-between">
+                <button onclick="closeOrderTypeModal()" class="text-white/80 hover:text-white active:scale-90 transition p-1">
+                    <i class="fas fa-chevron-left text-xl"></i>
+                </button>
+
+                <h3 class="text-white font-bold text-lg text-center flex-1">Pilih Jenis Layanan</h3>
+                
+                <button onclick="closeOrderTypeModal()" class="text-white/80 hover:text-white active:scale-90 transition p-1">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+
+            <div class="p-5 flex flex-col gap-3">
+                
+                <button onclick="closeOrderTypeModal()" class="self-start flex items-center gap-2 text-gray-500 hover:text-gray-800 font-bold text-sm active:scale-95 transition pb-1">
+                    <i class="fas fa-arrow-left"></i> Kembali
+                </button>
+                <button id="btn-type-now" onclick="selectOrderType(false)" class="w-full p-4 bg-green-500 text-white rounded-2xl font-bold flex flex-col items-center justify-center gap-1 active:scale-95 transition shadow-md disabled:bg-gray-400 disabled:cursor-not-allowed">
+                    <div class="flex items-center gap-2 text-lg">
+                        <i class="fas fa-bolt"></i> Order Sekarang
+                    </div>
+                    <span id="label-type-now" class="text-[10px] font-normal opacity-90">Driver akan langsung menuju lokasi</span>
+                </button>
+
+                <button id="btn-type-preorder" onclick="selectOrderType(true)" class="w-full p-4 bg-blue-500 text-white rounded-2xl font-bold flex flex-col items-center justify-center gap-1 active:scale-95 transition shadow-md">
+                    <div class="flex items-center gap-2 text-lg">
+                        <i class="fas fa-clock"></i> Pre-order
+                    </div>
+                    <span class="text-[10px] font-normal opacity-90">Pesan untuk waktu yang dijadwalkan</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

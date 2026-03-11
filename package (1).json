@@ -1,0 +1,18 @@
+{
+  "name": "go-flash-app",
+  "version": "1.0.0",
+  "description": "Aplikasi Ojek Online Realtime",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.97.0",
+    "cors": "^2.8.6",
+    "express": "^4.22.1",
+    "socket.io": "^4.8.3"
+  },
+  "engines": {
+    "node": "16.x"
+  }
+}
